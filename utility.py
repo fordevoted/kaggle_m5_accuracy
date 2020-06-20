@@ -3,7 +3,7 @@ import pandas as pd  # data processing, CSV file I/O (e.g. pd.read_csv)
 import math
 # Importing the Keras libraries and packages
 from keras.models import Sequential
-from keras.layers import Dense, LSTM, Dropout
+from keras.layers import Dense, LSTM, Dropout, Conv2D, Flatten
 import os
 from sklearn.preprocessing import MinMaxScaler
 
@@ -23,7 +23,6 @@ def downcast_dtypes(df):
 
 
 def preprocessing(dt, startDay=350, finishDay=1913, savePath="./kaggle/training data"):
-
     base_dt = dt[['item_id', 'dept_id', 'cat_id', 'store_id', 'state_id']]
     training_dt = []
     calendar = pd.read_csv(dataPath + "/calendar.csv")
@@ -82,8 +81,6 @@ def preprocessing(dt, startDay=350, finishDay=1913, savePath="./kaggle/training 
         data.insert(len(data.columns), 'snap_TX', calendar.at[startDay + index, 'snap_TX'])
         data.insert(len(data.columns), 'snap_WI', calendar.at[startDay + index, 'snap_WI'])
         index += 1
-        del data['item_id']
-        data = pd.get_dummies(data)
         data = downcast_dtypes(data)
     del calendar, event_type, week_day, daysBeforeEvent
     # print(training_dt[1553].head(10))
@@ -97,7 +94,7 @@ def preprocessing(dt, startDay=350, finishDay=1913, savePath="./kaggle/training 
         data['prices'] = np.nan
 
     for index, row in prices.iterrows():
-        if index % 100 == 0:
+        if index % 10000 == 0:
             print("## patch prices:" + str(index))
             # break
         # 11101 is initial week which also known as day 1
@@ -123,7 +120,7 @@ def preprocessing(dt, startDay=350, finishDay=1913, savePath="./kaggle/training 
     mean_prices = np.zeros((30490, 1))
     count_prices = np.zeros((30490, 1))
     for i in range(30490):
-        print("## data inter:" + str(i))
+        # print("## data inter:" + str(i))
         for data in training_dt:
             value = data.at[i, 'prices']
             if not math.isnan(value):
@@ -134,9 +131,12 @@ def preprocessing(dt, startDay=350, finishDay=1913, savePath="./kaggle/training 
     index = 0
     print("##　start to save　data")
     for data in training_dt:
-
+        del data['item_id']
+        data = pd.get_dummies(data)
+        prices = data['prices']
+        data.drop(labels=['prices'], axis=1, inplace=True)
+        data.insert(len(data.columns), 'prices', prices)
         for i in range(30490):
-
             value = data.at[i, 'prices']
             data.at[i, 'prices'] = value if not math.isnan(value) else mean_prices[i][0]
         index += 1
@@ -147,96 +147,132 @@ def prepare_training_data(startDay=350, data_path="./kaggle/training data"):
     # Feature Scaling
     # Scale the features using min-max scaler in range 0-1
     training_data = []
+    # TODO correct data count
+    # count = 15;
     for dirPath, dirNames, fileNames in os.walk(data_path):
         for f in fileNames:
-            training_data.append(pd.read_csv(os.path.join(dirPath, f)))
-    dt = pd.read_csv(dataPath + "/sales_train_validation.csv")
+            # if count < 0:
+            #     break
 
+            training_data.append(pd.read_csv(os.path.join(dirPath, f)))
+            # count -= 1
+    dt = pd.read_csv(dataPath + "/sales_train_validation.csv")
+    print("## loading data complete")
     index = 0
     for data in training_data:
         dt.index = data.index
         data['sales'] = dt['d_' + str(startDay + index)]
+        prices_mean = data['prices'].mean(skipna=True)
+        data['prices'] = data.prices.mask(data.prices ==0, prices_mean)
         training_data.pop(index)
         training_data.insert(index, np.array(data))
         index += 1
+        data = downcast_dtypes(data)
+    print("## complete patch sales")
     X_train = []
     y_train = []
-    for i in range(timesteps, 1913 - startDay):
-        X_train.append(training_data[i - timesteps:i])
+    ## TODO correct count
+    for i in range(timesteps, 1913 - timesteps):
+        data_list = training_data[i - timesteps:i]
+        x = data_list[0]
+        x = np.dstack((x, data_list[1]))
+        for data in data_list[2:]:
+            x = np.concatenate((x, data[:, :, None]), axis=-1)
+        x = x.reshape((data_list[0].shape[0], data_list[0].shape[1], timesteps))
+        # print(x.shape)
+        X_train.append(x)
         y_train.append(dt[:]['d_' + str(startDay + i + 1)])
         # İmportant!! if extra features are added (like oneDayBeforeEvent)
         # use only sales values for predictions (we only predict sales)
         # this is why 0:30490 columns are choosen
+    print("## complete prepare training data")
     del dt, training_data
     # Convert to np array to be able to feed the LSTM model
     X_train = np.array(X_train)
     y_train = np.array(y_train)
-    print(X_train.shape)
-    print(y_train.shape)
+    print("x_train_shape", X_train.shape)
+    print("y_train_shape", y_train.shape)
     return X_train, y_train
 
 
 def create_model(x_train_shape):
     # model
+    # print(x_train_shape)
     # Initialising the RNN
     model = Sequential()
     # Adding the first LSTM layer and some Dropout regularisation
     layer_1_units = 50
-    model.add(LSTM(units=layer_1_units, return_sequences=True, input_shape=(x_train_shape[1], x_train_shape[2])))
-    model.add(Dropout(0.2))
-
+    model.add(Conv2D(14, kernel_size=3, strides=(20, 2), input_shape=(x_train_shape[1], x_train_shape[2], x_train_shape[3])))
+    model.add(Conv2D(8, kernel_size=3, strides=(10, 2)))
+    model.add(Conv2D(6, kernel_size=3, strides=(5, 2)))
+    model.add(Conv2D(3, kernel_size=3, strides=(2, 2)))
+    # model.add(LSTM(units=layer_1_units, return_sequences=True))
+    # model.add(Dropout(0.2))
     # layer_1_units = 256
     # model.add(LSTM(units=layer_1_units, return_sequences=True))
     # model.add(Dropout(0.2))
 
     # Adding a second LSTM layer and some Dropout regularisation
     layer_2_units = 400
-    model.add(LSTM(units=layer_2_units, return_sequences=True))
-    model.add(Dropout(0.2))
+    # model.add(LSTM(units=layer_2_units, return_sequences=True))
+    # model.add(Dropout(0.2))
 
     # Adding a third LSTM layer and some Dropout regularisation
     layer_3_units = 400
-    model.add(LSTM(units=layer_3_units))
-    model.add(Dropout(0.2))
+    # model.add(LSTM(units=layer_3_units))
+    # model.add(Dropout(0.2))
     # Adding the output layer
-    model.add(Dense(units=30490))
+    model.add(Flatten())
+    model.add(Dense(40, activation='relu'))
+    model.add(Dense(30490, activation='relu'))
 
     # Compiling the RNN
     model.compile(optimizer='adam', loss='mean_squared_error', metrics=["mean_squared_error"])
+    model.summary()
     return model
 
 
 # TODO predict
-def predict(model, startDay, data_path, training_dataset):
+def predict(model, startDay, data_path, training_dataset, bias=350):
     # predict
     x_test = []
-    openFlag = False
+
     for dirPath, dirNames, fileNames in os.walk(training_dataset):
         for f in fileNames:
-            if openFlag:
+            end = f.find('_data.csv',)
+            day = int(f[2:end])
+            if day > (startDay - timesteps - bias):
                 x_test.append(pd.read_csv(os.path.join(dirPath, f)))
-            elif f.__contains__(str(startDay - timesteps)):
-                openFlag = True
-
+    print("## end of reading  data for 14 day in training data, x_test size:", len(x_test))
     dt = pd.read_csv(dataPath + "/sales_train_validation.csv")
-
     index = 0
     for data in x_test:
         dt.index = data.index
-        data['sales'] = dt['d_' + str(startDay + index)]
+        data['sales'] = dt['d_' + str(startDay - timesteps + index)]
+        # inplace store
         x_test.pop(index)
         x_test.insert(index, np.array(data))
         index += 1
+    del dt
+    print("## end of patching sales")
     for dirPath, dirNames, fileNames in os.walk(data_path):
         for f in fileNames:
-            x_test.append(pd.read_csv(os.path.join(dirPath, f)))
-
-    x_test = np.array(x_test)
+            x_test.append(np.array(pd.read_csv(os.path.join(dirPath, f))))
+    print("## end of reading testing data, x_test size : ", len(x_test))
     predictions = []
     for j in range(timesteps, timesteps + 28):
         # X_test = np.reshape(X_test, (X_test.shape[0], X_test.shape[1], 1))
-        predicted_stock_price = model.predict(x_test[j - timesteps:j].reshape(30490, len(x_test[0].columns), timesteps))
-        x_test[j + 1] = np.append(x_test[j+1], np.array(predicted_stock_price)).reshape(30940, len(x_test[0].columns))
+        data_list = x_test[j - timesteps:j]
+        # print(j - timesteps, j)
+        x = data_list[0]
+        x = np.dstack((x, data_list[1]))
+
+        for data in data_list[2:]:
+            # print(j, x.shape, data.shape)
+            x = np.concatenate((x, data[:, :, None]), axis=-1)
+        x = x.reshape((1, data_list[0].shape[0], data_list[0].shape[1], timesteps))
+        predicted_stock_price = np.squeeze(model.predict(x), axis=0)
+        x_test[j] = np.concatenate((x_test[j], np.array(predicted_stock_price)[:, None]), axis=1).reshape(30490, x_test[0].shape[1])
         predictions.append(predicted_stock_price)
     return predictions
 

@@ -6,7 +6,9 @@ import utility
 
 dataPath = "./kaggle/input"
 dt = pd.read_csv(dataPath + "/sales_train_validation.csv")
-
+startDay=350
+finishDay=1913
+savePath="./kaggle/training data"
 def test1():
     dataPath = "./kaggle/input"
 
@@ -87,7 +89,7 @@ def test1():
     print("end")
 
 
-def test2(dt, startDay=350, finishDay=1913, savePath="./kaggle/save data"):
+def test2():
 
     base_dt = dt[['item_id', 'dept_id', 'cat_id', 'store_id', 'state_id']]
     training_dt = []
@@ -160,9 +162,9 @@ def test2(dt, startDay=350, finishDay=1913, savePath="./kaggle/save data"):
         data['prices'] = np.nan
 
     for index, row in prices.iterrows():
-        if index % 100 == 99:
+        if index % 10000 == 0:
             print("## patch prices:" + str(index))
-            break
+            # break
         # 11101 is initial week which also known as day 1
         # row is store_id   item_id     wm_yr_wk	sell_price
         day_index = (int(row[2]) - 11101) * 7 + 1
@@ -186,7 +188,7 @@ def test2(dt, startDay=350, finishDay=1913, savePath="./kaggle/save data"):
     mean_prices = np.zeros((30490, 1))
     count_prices = np.zeros((30490, 1))
     for i in range(30490):
-        print("## data inter:" + str(i))
+        # print("## data inter:" + str(i))
         for data in training_dt:
             value = data.at[i, 'prices']
             if not math.isnan(value):
@@ -201,7 +203,7 @@ def test2(dt, startDay=350, finishDay=1913, savePath="./kaggle/save data"):
         data = pd.get_dummies(data)
         prices = data['prices']
         data.drop(labels=['prices'], axis=1, inplace=True)
-        data.insert(len(data.columns) - 1, 'prices', prices)
+        data.insert(len(data.columns), 'prices', prices)
         for i in range(30490):
             value = data.at[i, 'prices']
             data.at[i, 'prices'] = value if not math.isnan(value) else mean_prices[i][0]
@@ -209,4 +211,5 @@ def test2(dt, startDay=350, finishDay=1913, savePath="./kaggle/save data"):
         data.to_csv(savePath + "/d_" + str(index) + "_data.csv", index=False)
 
 
-test2(dt, 350, 1913, "./kaggle/training data")
+# test2()
+X_train, y_train = utility.prepare_training_data(data_path=savePath)
