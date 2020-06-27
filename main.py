@@ -20,9 +20,6 @@ predictDay = 1941
 ### utility.preprocessing(dt, startDay=startDay, finishDay=trainFinishDay, savePath=training_data_path)
 # print(dt.columns)
 
-X_train, y_train = utility.prepare_training_data(data_path=training_data_path)
-model = utility.create_model(X_train.shape)
-
 # hyper parameter
 epoch = 2000
 batch_size = 32
@@ -31,10 +28,24 @@ filepath = "weights_best.hdf5"
 early_stopping = EarlyStopping(monitor='val_loss', patience=40, verbose=2)
 checkPoint = ModelCheckpoint(filepath, monitor='val_loss', verbose=1, save_best_only=True,
                              mode='min')
+# batch learning
 # fit
 #print("array shape  " + str(X_train.shape))
-model.fit(X_train, y_train, epochs=epoch, batch_size=batch_size,
+isEnd = False
+startDay = utility.startDay
+duration = 399
+while not isEnd:
+	finishDay = startDay + duration
+	if finishDay > 1913:
+		finishDay = 1913
+		isEnd = True
+	X_train, y_train = utility.prepare_training_data(startDay, finishDay, data_path=training_data_path)
+	if startDay == utility.startDay:
+		model = utility.create_model(X_train.shape)
+
+	model.fit(X_train, y_train, epochs=epoch, batch_size=batch_size,
          validation_split=validation_spilt, verbose=1, callbacks=[early_stopping, checkPoint])
+	startDay = finish+1s
 
 # predict
 #prepare test data
