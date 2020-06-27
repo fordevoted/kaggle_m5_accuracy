@@ -143,7 +143,7 @@ def preprocessing(dt, startDay=350, finishDay=1913, savePath="./kaggle/training 
         data.to_csv(savePath + "/d_" + str(index) + "_data.csv", index=False)
 
 
-def prepare_training_data(startDay=350, data_path="./kaggle/training data"):
+def prepare_training_data(beginDay=350, finishDay=1913 data_path="./kaggle/training data"):
     # Feature Scaling
     # Scale the features using min-max scaler in range 0-1
     training_data = []
@@ -161,7 +161,7 @@ def prepare_training_data(startDay=350, data_path="./kaggle/training data"):
     index = 0
     for data in training_data:
         dt.index = data.index
-        data['sales'] = dt['d_' + str(startDay + index)]
+        data['sales'] = dt['d_' + str(beginDay + index)]
         prices_mean = data['prices'].mean(skipna=True)
         data['prices'] = data.prices.mask(data.prices ==0, prices_mean)
         training_data.pop(index)
@@ -172,7 +172,7 @@ def prepare_training_data(startDay=350, data_path="./kaggle/training data"):
     X_train = []
     y_train = []
     ## TODO correct count
-    for i in range(timesteps, 1913 - timesteps):
+    for i in range(beginDay - startDay + timesteps, finishDay - startDay + timesteps):
         data_list = training_data[i - timesteps:i]
         x = data_list[0]
         x = np.dstack((x, data_list[1]))
@@ -181,7 +181,7 @@ def prepare_training_data(startDay=350, data_path="./kaggle/training data"):
         x = x.reshape((data_list[0].shape[0], data_list[0].shape[1], timesteps))
         # print(x.shape)
         X_train.append(x)
-        y_train.append(dt[:]['d_' + str(startDay + i + 1)])
+        y_train.append(dt[:]['d_' + str(beginDay + i + 1)])
         # İmportant!! if extra features are added (like oneDayBeforeEvent)
         # use only sales values for predictions (we only predict sales)
         # this is why 0:30490 columns are choosen
