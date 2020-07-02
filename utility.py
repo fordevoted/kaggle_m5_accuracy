@@ -3,9 +3,11 @@ import pandas as pd  # data processing, CSV file I/O (e.g. pd.read_csv)
 import math
 # Importing the Keras libraries and packages
 from keras.models import Sequential
-from keras.layers import Dense, LSTM, Dropout, Conv2D, Flatten
+from keras.layers import Dense, LSTM, Dropout, Conv2D, Flatten, TimeDistributed, Activation, MaxPooling2D, \
+    GlobalAveragePooling1D
 import os
 from sklearn.preprocessing import MinMaxScaler
+from keras import backend as K
 
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 dataPath = "./kaggle/input"
@@ -143,7 +145,7 @@ def preprocessing(dt, startDay=350, finishDay=1913, savePath="./kaggle/training 
         data.to_csv(savePath + "/d_" + str(index) + "_data.csv", index=False)
 
 
-def prepare_training_data(startDay=350, data_path="./kaggle/training data"):
+def prepare_training_data(beginDay=350, finishDay=1913, data_path="./kaggle/training data"):
     # Feature Scaling
     # Scale the features using min-max scaler in range 0-1
     training_data = []
@@ -163,7 +165,7 @@ def prepare_training_data(startDay=350, data_path="./kaggle/training data"):
         dt.index = data.index
         data['sales'] = dt['d_' + str(startDay + index)]
         prices_mean = data['prices'].mean(skipna=True)
-        data['prices'] = data.prices.mask(data.prices ==0, prices_mean)
+        data['prices'] = data.prices.mask(data.prices == 0, prices_mean)
         training_data.pop(index)
         training_data.insert(index, np.array(data))
         index += 1
@@ -172,13 +174,15 @@ def prepare_training_data(startDay=350, data_path="./kaggle/training data"):
     X_train = []
     y_train = []
     ## TODO correct count
-    for i in range(timesteps, 1913 - timesteps):
+    for i in range(beginDay - startDay + timesteps, finishDay - startDay):
         data_list = training_data[i - timesteps:i]
+        print("prepare_training_data - line 176 i: " + str(i))
         x = data_list[0]
         x = np.dstack((x, data_list[1]))
         for data in data_list[2:]:
             x = np.concatenate((x, data[:, :, None]), axis=-1)
-        x = x.reshape((data_list[0].shape[0], data_list[0].shape[1], timesteps))
+        x = x.reshape((data_list[0].shape[0], data_list[0].shape[1], 1, timesteps))
+        x = x.transpose((3, 0, 1, 2))
         # print(x.shape)
         X_train.append(x)
         y_train.append(dt[:]['d_' + str(startDay + i + 1)])
@@ -201,31 +205,25 @@ def create_model(x_train_shape):
     # Initialising the RNN
     model = Sequential()
     # Adding the first LSTM layer and some Dropout regularisation
-    layer_1_units = 50
-    model.add(Conv2D(14, kernel_size=3, strides=(20, 2), input_shape=(x_train_shape[1], x_train_shape[2], x_train_shape[3])))
-    model.add(Conv2D(8, kernel_size=3, strides=(10, 2)))
-    model.add(Conv2D(6, kernel_size=3, strides=(5, 2)))
-    model.add(Conv2D(3, kernel_size=3, strides=(2, 2)))
-    # model.add(LSTM(units=layer_1_units, return_sequences=True))
-    # model.add(Dropout(0.2))
-    # layer_1_units = 256
-    # model.add(LSTM(units=layer_1_units, return_sequences=True))
-    # model.add(Dropout(0.2))
+    model.add(
+        TimeDistributed(Conv2D(32, kernel_size=3, strides=(20, 2), padding='same'), input_shape=(14, 30490, 40, 1)))
+    model.add(TimeDistributed(Activation('relu')))
+    model.add(TimeDistributed(Conv2D(32, kernel_size=3, strides=(10, 2))))
+    model.add(TimeDistributed(Activation('relu')))
+    model.add(TimeDistributed(Conv2D(32, kernel_size=3, strides=(5, 2))))
+    model.add(TimeDistributed(Activation('relu')))
+    model.add(TimeDistributed(MaxPooling2D(pool_size=(2, 2))))
+    model.add(TimeDistributed(Dropout(0.25)))
 
-    # Adding a second LSTM layer and some Dropout regularisation
-    layer_2_units = 400
-    # model.add(LSTM(units=layer_2_units, return_sequences=True))
-    # model.add(Dropout(0.2))
+    model.add(TimeDistributed(Flatten()))
+    model.add(TimeDistributed(Dense(512)))
 
-    # Adding a third LSTM layer and some Dropout regularisation
-    layer_3_units = 400
-    # model.add(LSTM(units=layer_3_units))
-    # model.add(Dropout(0.2))
-    # Adding the output layer
-    model.add(Flatten())
-    model.add(Dense(40, activation='relu'))
-    model.add(Dense(30490, activation='relu'))
+    model.add(TimeDistributed(Dense(128, name="first_dense_rgb")))
 
+    model.add(LSTM(20, return_sequences=True, name="lstm_layer_rgb"));
+
+    model.add(TimeDistributed(Dense(30490), name="time_distr_dense_one_rgb"))
+    # model.add(GlobalAveragePooling1D(name="global_avg_rgb"))
     # Compiling the RNN
     model.compile(optimizer='adam', loss='mean_squared_error', metrics=["mean_squared_error"])
     model.summary()
@@ -239,7 +237,7 @@ def predict(model, startDay, data_path, training_dataset, bias=350):
 
     for dirPath, dirNames, fileNames in os.walk(training_dataset):
         for f in fileNames:
-            end = f.find('_data.csv',)
+            end = f.find('_data.csv', )
             day = int(f[2:end])
             if day > (startDay - timesteps - bias):
                 x_test.append(pd.read_csv(os.path.join(dirPath, f)))
@@ -270,9 +268,11 @@ def predict(model, startDay, data_path, training_dataset, bias=350):
         for data in data_list[2:]:
             # print(j, x.shape, data.shape)
             x = np.concatenate((x, data[:, :, None]), axis=-1)
-        x = x.reshape((1, data_list[0].shape[0], data_list[0].shape[1], timesteps))
-        predicted_stock_price = np.squeeze(model.predict(x), axis=0)
-        x_test[j] = np.concatenate((x_test[j], np.array(predicted_stock_price)[:, None]), axis=1).reshape(30490, x_test[0].shape[1])
+        x = x.reshape((1, data_list[0].shape[0], data_list[0].shape[1], 1, timesteps))
+        x = x.transpose((0, 4, 1, 2, 3))
+        predicted_stock_price = np.squeeze(model.predict(x, batch_size=1), axis=0)
+        x_test[j] = np.concatenate((x_test[j], np.array(predicted_stock_price)[:, None]), axis=1).reshape(30490, x_test[
+            0].shape[1])
         predictions.append(predicted_stock_price)
     return predictions
 
