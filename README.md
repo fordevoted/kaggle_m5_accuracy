@@ -2,5 +2,5 @@
 kaggle
 
 ## Introduction
-   not complete task, still working on it, just version control
+   still work in progress
  
